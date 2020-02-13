@@ -1,6 +1,9 @@
 '''This module contains a collection of physical and aphysical activation functions. Nonlinearities can be incorporated
 into an optical neural network by using the Activation(nonlinearity) NetworkLayer.'''
 
+'''Adapted to support tunable Fabry-Perot Interferometer activation function
+Author: Ben Steel
+Date: 15/04/19'''
 
 import numpy as np
 
@@ -402,3 +405,156 @@ class zReLU(ComplexNonlinearity):
 
     def df_dIm(self, a: np.ndarray, b: np.ndarray) -> np.ndarray:
         return (a > 0) * (b > 0) * 1j
+
+class TrainableNonLinearity(ComplexNonlinearity):
+    '''
+    Nonlinearity with a trainable parameter
+    '''
+
+    def __init__(self, N, holomorphic, mode):
+        super().__init__(N, holomorphic, mode)
+
+    def compute_gradients(self, inputs: np.ndarray, delta:np.ndarray):
+        '''
+        Compute the gradients for nonlinearity in this layer, without adjusting the parameters
+        :param forward_field: forward-propagating input electric field at the beginning of the nonlinearity
+        :param adjoint_field: backward-propagating output electric field at the end of the nonlinearity
+        :return:
+        '''
+        raise NotImplementedError
+
+
+class FabryPerotInferometer(TrainableNonLinearity):
+    '''
+    CMOS light detector actuated FBI
+    '''
+
+    def __init__(self, N, KAPPA, INIT_VAR):
+        super().__init__(N, holomorphic=False, mode="full")
+
+        self.KAPPA = KAPPA
+        self.N = N
+
+        self.X0_re: np.ndarray = np.random.uniform(size=(N,1), low = -INIT_VAR, high=INIT_VAR)
+        self.X0_im: np.ndarray = np.random.uniform(size=(N,1), low = -INIT_VAR, high=INIT_VAR)
+
+    def forward_pass(self, X: np.ndarray):
+        X_re = np.real(X)
+        X_im = np.imag(X)
+        return (0.5*self.KAPPA*X)/((X_re**2 + X_im**2 - self.X0_re**2 - self.X0_im**2)*-1j + 0.5*self.KAPPA)
+
+    def dRe_dRe(self, x: np.ndarray, y: np.ndarray):
+        x2 = x**2
+        y2 = y**2
+        a2 = self.X0_re**2
+        b2 = self.X0_im**2
+
+        xyab = x2 + y2 - a2 - b2
+        xyab2 = xyab**2
+
+        half_k2 = (0.5 * self.KAPPA)**2
+
+        xy = x * y
+
+        denom = (half_k2 + xyab2) ** 2
+
+        re1 = self.KAPPA * (half_k2 + xyab2) * (0.25*self.KAPPA - xy)
+        re2 = 4 * self.KAPPA * x * xyab * (0.25*self.KAPPA*x - 0.5*y*xyab)
+
+        return (re1 - re2) / denom
+
+    def dRe_dIm(self, x: np.ndarray, y: np.ndarray):
+        x2 = x**2
+        y2 = y**2
+        a2 = self.X0_re**2
+        b2 = self.X0_im**2
+
+        xyab = x2 + y2 - a2 - b2
+        xyab2 = xyab**2
+
+        half_k2 = (0.5 * self.KAPPA)**2
+
+        xy = x * y
+
+        denom = (half_k2 + xyab2) ** 2
+
+        re1 = self.KAPPA * (half_k2 + xyab2) * (0.5*a2 + 0.5*b2 - 0.5*x2 - 1.5*y2)
+        re2 = 4 * self.KAPPA * y * xyab * (0.25*self.KAPPA*x - 0.5*y*xyab)
+
+        return (re1 - re2) / denom
+
+    def dIm_dRe(self, x: np.ndarray, y: np.ndarray):
+        x2 = x**2
+        y2 = y**2
+        a2 = self.X0_re**2
+        b2 = self.X0_im**2
+
+        xyab = x2 + y2 - a2 - b2
+        xyab2 = xyab**2
+
+        half_k2 = (0.5 * self.KAPPA)**2
+
+        xy = x * y
+
+        denom = (half_k2 + xyab2) ** 2
+
+        re1 = self.KAPPA * (half_k2 + xyab2) * (1.5*x2 + 0.5*y2 - 0.5*a2 - 0.5*b2)
+        re2 = 4 * self.KAPPA * x * xyab * (0.25*self.KAPPA*y + 0.5*x*xyab)
+
+        return (re1 - re2) / denom
+
+    def dIm_dIm(self, x: np.ndarray, y: np.ndarray):
+        x2 = x**2
+        y2 = y**2
+        a2 = self.X0_re**2
+        b2 = self.X0_im**2
+
+        xyab = x2 + y2 - a2 - b2
+        xyab2 = xyab**2
+
+        half_k2 = (0.5 * self.KAPPA)**2
+
+        xy = x * y
+
+        denom = (half_k2 + xyab2) ** 2
+
+        re1 = self.KAPPA * (half_k2 + xyab2) * (0.25*self.KAPPA + xy)
+        re2 = 4 * self.KAPPA * y * xyab * (0.25*self.KAPPA*y + 0.5*x*xyab)
+
+        return (re1 - re2) / denom
+
+    def compute_gradients(self, inputs: np.ndarray, delta:np.ndarray):
+
+        x = np.real(inputs)
+        y = np.imag(inputs)
+
+        d_re = np.real(delta)
+        d_im = np.imag(delta)
+
+        x2 = x**2
+        y2 = y**2
+        a2 = self.X0_re**2
+        b2 = self.X0_im**2
+
+        xyab = x2 + y2 - a2 - b2
+        xyab2 = xyab**2
+
+        half_k2 = (0.5 * self.KAPPA)**2
+
+        denom = (half_k2 + xyab2) ** 2
+
+        seq1 = 4*self.KAPPA * xyab * (0.25*self.KAPPA*x - 0.5*y*xyab)
+        seq2 = 4*self.KAPPA * xyab * (0.25*self.KAPPA*y + 0.5*x*xyab)
+
+        re1 = y * self.KAPPA * (half_k2 + xyab2)
+        re2 = seq1
+
+        im1 = seq2
+        im2 = x * self.KAPPA * (half_k2 + xyab2)
+
+        reX0 = (self.X0_re - 1j*self.X0_im) * (re1 + re2) / denom
+        imX0 = (-1 * self.X0_im + 1j*self.X0_re) * (im1 - im2) / denom
+
+        db = d_re * reX0 + 1j * d_im * imX0
+
+        return db

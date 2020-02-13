@@ -7,7 +7,8 @@ from typing import Tuple, Type
 import numpy as np
 
 from neuroptica.components import MZI, PhaseShifter
-from neuroptica.layers import OpticalMeshNetworkLayer
+from neuroptica.layers import OpticalMeshNetworkLayer, Activation
+from neuroptica.nonlinearities import TrainableNonLinearity
 from neuroptica.losses import Loss
 from neuroptica.models import Sequential
 from neuroptica.utils import pbar
@@ -135,6 +136,13 @@ class InSituAdam(Optimizer):
                     self.v[component] = np.zeros(component.dof)
                     self.g[component] = np.zeros(component.dof)
 
+            elif isinstance(layer, Activation) and isinstance(layer.nonlinearity, TrainableNonLinearity):
+                self.m[layer] = np.zeros((layer.nonlinearity.N))
+                self.v[layer] = np.zeros((layer.nonlinearity.N))
+                self.g[layer] = np.zeros((layer.nonlinearity.N))
+
+            
+
     def fit(self, data: np.ndarray, labels: np.ndarray, epochs=1000, batch_size=32, show_progress=True,
             cache_fields=False, use_partial_vectors=False):
         '''
@@ -199,6 +207,21 @@ class InSituAdam(Optimizer):
                                 dtheta, dphi = grad
                                 cmpt.theta += dtheta
                                 cmpt.phi += dphi
+
+                    elif isinstance(layer, Activation) and isinstance(layer.nonlinearity, TrainableNonLinearity):
+                        
+                        gradients = layer.nonlinearity.compute_gradients(layer.input_prev, delta_prev)
+
+                        self.g[layer] = np.mean(gradients, axis=1)
+                        self.m[layer] = self.beta1 * self.m[layer] + (1 - self.beta1) * self.g[layer]
+                        self.v[layer] = self.beta2 * self.v[layer] + (1 - self.beta2) * self.g[layer] ** 2
+                        mhat = self.m[layer] / (1 - self.beta1 ** self.t)
+                        vhat = self.v[layer] / (1 - self.beta2 ** self.t)
+
+                        grad = -1 * self.step_size * mhat / (np.sqrt(vhat) + self.epsilon)
+
+                        layer.nonlinearity.X0_re += np.real(grad).reshape(-1,1)
+                        layer.nonlinearity.X0_im += np.imag(grad).reshape(-1,1)
 
                     # Set the backprop signal for the subsequent (spatially previous) layer
                     delta_prev = deltas[layer.__name__]
