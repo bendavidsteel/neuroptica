@@ -102,6 +102,11 @@ class InSituGradientDescent(Optimizer):
                         layer.mesh.adjoint_optimize(layer.input_prev, delta_prev,
                                                     lambda dx: -1 * self.learning_rate * dx)
 
+                    # if a trainable activation is used compute gradients for the weights there
+                    elif isinstance(layer, Activation) and isinstance(layer.nonlinearity, TrainableNonLinearity):
+                        layer.nonlinearity.compute_gradients(layer.input_prev, delta_prev,
+                                                             lambda dx: -1 self.learning_rate * dx)
+
                     # Set the backprop signal for the subsequent (spatially previous) layer
                     delta_prev = gradients[layer.__name__]
 

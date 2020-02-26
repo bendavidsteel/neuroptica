@@ -6,7 +6,7 @@ import numpy as np
 from neuroptica.component_layers import MZILayer, PhaseShifterLayer
 from neuroptica.layers import Activation, ClementsLayer, OpticalMeshNetworkLayer
 from neuroptica.models import Sequential
-from neuroptica.nonlinearities import Abs, AbsSquared, LinearMask
+from neuroptica.nonlinearities import Abs, AbsSquared, LinearMask, TrainableNonLinearity
 from tests.base import NeuropticaTest
 
 
@@ -89,6 +89,29 @@ class TestModels(NeuropticaTest):
 
                     else:
                         raise ValueError("Tunable component layer must be phase-shifting!")
+
+            elif isinstance(layer, Activation) and isinstance(layer.nonlinearity, TrainableNonLinearity):
+                # Optimize the mesh using gradient descent
+                gradients = net_layer.mesh.compute_gradients(net_layer.input_prev, delta_prev)
+
+                dL_dbias_nonlinearity = gradients
+                delta_biases = epsilon * dL_dbias
+
+                for i, delta_bias in enumerate(delta_biases):
+                    # dL/dbias obtained from gradient computation
+                    dL_dbias = dL_dbias_nonlinearity[i]
+
+                    # TODO fix this
+
+                    # estimate dL/dbias numerically
+                    L_bias = loss_fn(mode.forward_pass(X), Y)[i]
+                    net_layer.nonlinearity.bias_real += delta_bias
+                    L_bias_plus_dbias = loss_fn(model.forward_pass(X), Y)[i]
+                    net_layer.nonlinearity.bias_real -= delta_bias
+
+                    dL_dbias_num = (L_bias_plus_dbias - L_bias) / (delta_bias + 1e-15)
+
+                    np.testing.assert_almost_equal(dL_dbias, dL_dbias_num, decimal=decimal)
 
             # Set the backprop signal for the subsequent (spatially previous) layer
             delta_prev = deltas[net_layer.__name__]

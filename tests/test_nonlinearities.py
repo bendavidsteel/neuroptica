@@ -39,6 +39,9 @@ class TestNonlinearities(NeuropticaTest):
                            'V_bias': 10.0,
                            'R': 2e5}
 
+            fpi_settings = {'kappa': 1,
+                            'init_var': 1}
+
             # nonlinearities that may be applied to complex outpus
             nonlinearities_complex = [Abs(N, mode="full"),
                                       Abs(N, mode="condensed"),
@@ -51,7 +54,8 @@ class TestNonlinearities(NeuropticaTest):
                                       bpReLU(N, cutoff=0.5, alpha=0.1),
                                       modReLU(N, cutoff=0.5),
                                       cReLU(N),
-                                      zReLU(N)]
+                                      zReLU(N),
+                                      FabryPerotInterferometer(N, **fpi_settings)]
 
             # nonlinearities that may only be applied to real inputs
             nonlinearities_real = [SoftMax(N),
