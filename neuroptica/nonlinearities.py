@@ -1,6 +1,8 @@
 '''This module contains a collection of physical and aphysical activation functions. Nonlinearities can be incorporated
 into an optical neural network by using the Activation(nonlinearity) NetworkLayer.'''
 
+from typing import Callable
+
 import numpy as np
 
 from neuroptica.settings import NP_COMPLEX
@@ -81,7 +83,7 @@ class ComplexNonlinearity(Nonlinearity):
 
             elif self.mode == "condensed":
                 a, b = np.real(Z), np.imag(Z)
-                return np.real(gamma * self.df_dRe(a, b)) - 1j * np.real(gamma * self.df_dIm(a, b))
+                return np.real(gamma) * self.df_dRe(a, b) - 1j * np.imag(gamma) * self.df_dIm(a, b)
 
             elif self.mode == "polar":
                 r, phi = np.abs(Z), np.angle(Z)
@@ -414,10 +416,9 @@ class TrainableNonLinearity(ComplexNonlinearity):
         '''
         super().__init__(N, holomorphic, mode)
 
-        self.bias_real: np.ndarray = self.initialize_parameters()
-        self.bias_imag: np.ndarray = self.initialize_parameters()
+        self.bias: np.ndarray = self.initialize_parameters()
 
-    def initialize_parameters():
+    def initialize_parameters(self):
         '''
         Initialize layers with some initializer
         :return: Initialized parameters
@@ -429,7 +430,7 @@ class TrainableNonLinearity(ComplexNonlinearity):
         Compute the gradients for nonlinearity in this layer, without adjusting the parameters
         :param forward_field: forward-propagating input electric field at the beginning of the nonlinearity
         :param adjoint_field: backward-propagating output electric field at the end of the nonlinearity
-        :return:
+        :return: A complex gradient
         '''
         raise NotImplementedError
 
@@ -446,11 +447,10 @@ class TrainableNonLinearity(ComplexNonlinearity):
         :return: None, or (if dry_run==True) a dictionary of parameter gradients for each ComponentLayer
         '''
         gradients = layer.nonlinearity.compute_gradients(layer.input_prev, delta_prev)
-        
+
         grad = update_fn(np.mean(gradients, axis=1))
 
-        layer.nonlinearity.bias_real += np.real(grad).reshape(-1,1)
-        layer.nonlinearity.bias_imag += np.imag(grad).reshape(-1,1)
+        layer.nonlinearity.bias += grad.reshape(-1,1)
 
 
 class FabryPerotInterferometer(TrainableNonLinearity):
@@ -463,60 +463,86 @@ class FabryPerotInterferometer(TrainableNonLinearity):
         :param kappa: parameter representing the full width at half maximum of the Fabry Perot Interferometer
         :param init_var: initialization variance of the parameters
         '''
-        super().__init__(N, holomorphic=False, mode="full")
-
         self.kappa = kappa
         self.init_var = init_var
 
-    def initialize_parameters():
+        super().__init__(N, holomorphic=False, mode="condensed")
+
+    def initialize_parameters(self):
         '''
         Initialize with a uniform distribution with a given variance centered around zero
         '''
-        return np.random.uniform(size=(N,1), low = -self.init_var, high=self.init_var)
+        return np.random.uniform(size=(self.N,1), low = -self.init_var, high=self.init_var) + \
+            1j*np.random.uniform(size=(self.N,1), low = -self.init_var, high=self.init_var)
 
     def forward_pass(self, X: np.ndarray):
-        X_re = np.real(X)
-        X_im = np.imag(X)
-        return (0.5*self.kappa*X)/((X_re**2 + X_im**2 - self.bias_real**2 - self.bias_imag**2)*-1j + 0.5*self.kappa)
+        return (self.kappa*X)/((np.abs(X) - np.abs(self.bias))*-1j + self.kappa)
 
-    def dRe_dRe(self, x: np.ndarray, y: np.ndarray):
+    '''def df_dZ(self, Z: np.ndarray):
+        return (self.kappa * (1j*np.abs(self.bias) + self.kappa + 1j*Z**2)) / (
+        1j*(np.abs(self.bias) - np.abs(Z)) + self.kappa)**2'''
+
+    def df_dRe(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+        return -1 * (1j * self.kappa * (
+        np.abs(self.bias) - 1j*self.kappa + x**2 + 2*1j*x*y - y**2)) / (
+        x**2 + y**2 + 1j*self.kappa - np.abs(self.bias))**2
+
+    def df_dIm(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+        return (self.kappa * (np.abs(self.bias) - 1j*self.kappa - x**2 - 2*1j*x*y + y**2)) / (
+        x**2 + y**2 + 1j*self.kappa - np.abs(self.bias))**2
+
+    '''def dRe_dRe(self, x: np.ndarray, y: np.ndarray):
         xyab = (x**2) + (y**2) - (self.bias_real**2) - (self.bias_imag**2)
         half_k2 = (0.5 * self.kappa)**2
-        return ((self.kappa * (half_k2 + xyab2) * (0.25*self.kappa - (x * y)))
-            - (4 * self.kappa * x * xyab * (0.25*self.kappa*x - 0.5*y*xyab)))
-            / ((half_k2 + xyab**2) ** 2)
+        return ((self.kappa * (half_k2 + (xyab**2)) * (0.25*self.kappa - (x * y))) - (
+                4 * self.kappa * x * xyab * (0.25*self.kappa*x - 0.5*y*xyab))) / (
+                (half_k2 + xyab**2) ** 2)
+        return ((self.kappa**2 - 2*self.kappa*)/()) - (()/())
 
     def dRe_dIm(self, x: np.ndarray, y: np.ndarray):
         xyab = (x**2) + (y**2) - (self.bias_real**2) - (self.bias_imag**2)
         half_k2 = (0.5 * self.kappa)**2
-        return ((self.kappa * (half_k2 + (xyab**2)) * (0.5*(self.bias_real**2) + 0.5*(self.bias_imag**2) - 0.5*(x**2) - 1.5*(y**2))) 
-            - (4 * self.kappa * y * xyab * (0.25*self.kappa*x - 0.5*y*xyab)))
-            / ((half_k2 + (xyab**2)) ** 2)
+        return ((self.kappa * (half_k2 + (xyab**2)) * (0.5*(self.bias_real**2) + 0.5*(
+                self.bias_imag**2) - 0.5*(x**2) - 1.5*(y**2))) - (4 * self.kappa * y * xyab * (
+                0.25*self.kappa*x - 0.5*y*xyab))) / ((half_k2 + (xyab**2)) ** 2)
+        
 
     def dIm_dRe(self, x: np.ndarray, y: np.ndarray):
         xyab = (x**2) + (y**2) - (self.bias_real**2) - (self.bias_imag**2)
         half_k2 = (0.5 * self.kappa)**2
-        return ((self.kappa * (half_k2 + (xyab**2)) * (1.5*(x**2) + 0.5*(y**2) - 0.5*(self.bias_real**2) - 0.5*(self.bias_imag**2)))
-            - (4 * self.kappa * x * xyab * (0.25*self.kappa*y + 0.5*x*xyab)))
-            / ((half_k2 + (xyab**2)) ** 2)
+        return ((self.kappa * (half_k2 + (xyab**2)) * (1.5*(x**2) + 0.5*(y**2) - 0.5*(
+                self.bias_real**2) - 0.5*(self.bias_imag**2))) - (4 * self.kappa * x * xyab * (
+                0.25*self.kappa*y + 0.5*x*xyab))) / ((half_k2 + (xyab**2)) ** 2)
 
     def dIm_dIm(self, x: np.ndarray, y: np.ndarray):
         xyab = (x**2) + (y**2) - (self.bias_real**2) - (self.bias_imag**2)
         half_k2 = (0.5 * self.kappa)**2
-        return ((self.kappa * (half_k2 + (xyab**2)) * (0.25*self.kappa + (x * y)))
-            - (4 * self.kappa * y * xyab * (0.25*self.kappa*y + 0.5*x*xyab)))
-            / ((half_k2 + (xyab**2)) ** 2)
+        return ((self.kappa * (half_k2 + (xyab**2)) * (0.25*self.kappa + (x * y)))- (
+                4 * self.kappa * y * xyab * (0.25*self.kappa*y + 0.5*x*xyab))) / (
+                (half_k2 + (xyab**2)) ** 2)'''
+
+    
 
     def compute_gradients(self, inputs: np.ndarray, delta:np.ndarray):
-        x = np.real(inputs)
+        '''x = np.real(inputs)
         y = np.imag(inputs)
         d_re = np.real(delta)
         d_im = np.imag(delta)
 
-        xyab = (x**2) + (y**2) - (self.bias_real**2) - (self.bias_imag**2)
-        half_k2 = (0.5 * self.kappa)**2
+        xyab = (x**2) + (y**2) - (self.bias_real**2) - (self.bias_imag**2)'''
 
-        return (d_re * ((self.bias_real - 1j*self.bias_imag) * ((y * self.kappa * (half_k2 + xyab**2))
-            + (4*self.kappa * xyab * (0.25*self.kappa*x - 0.5*y*xyab))) / ((half_k2 + xyab**2) ** 2))) 
-            + (1j * d_im * ((-1 * self.bias_imag + 1j*self.bias_real) * ((4*self.kappa * xyab * (0.25*self.kappa*y + 0.5*x*xyab))
-            - (x * self.kappa * (half_k2 + xyab**2))) / ((half_k2 + xyab**2) ** 2)))
+        '''return (d_re * ((self.bias_real - 1j*self.bias_imag) * ((y * self.kappa * (half_k2 + xyab**2)) + (
+            4*self.kappa * xyab * (0.25*self.kappa*x - 0.5*y*xyab))) / ((half_k2 + xyab**2) ** 2))) + (
+            1j * d_im * ((-1 * self.bias_imag + 1j*self.bias_real) * ((4*self.kappa * xyab * (0.25*self.kappa*y + 0.5*x*xyab)) - (
+            x * self.kappa * (half_k2 + xyab**2))) / ((half_k2 + xyab**2) ** 2)))'''
+
+        dZ_dReBias = (2*1j*np.real(self.bias)*self.kappa*inputs) / (np.abs(inputs) - np.abs(self.bias) + 1j*self.kappa)**2
+        dZ_dImBias = (2*1j*np.imag(self.bias)*self.kappa*inputs) / (np.abs(inputs) - np.abs(self.bias) + 1j*self.kappa)**2
+
+        return np.real(delta * dZ_dReBias) - 1j * np.real(delta * dZ_dImBias)
+
+        '''return delta * np.conjugate(-1*(1j * self.kappa * inputs * (2 * np.real(self.bias)))/((1j*(
+            np.abs(self.bias) - np.abs(inputs)) + self.kappa)**2))'''
+
+        
+        

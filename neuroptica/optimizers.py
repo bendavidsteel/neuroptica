@@ -105,7 +105,7 @@ class InSituGradientDescent(Optimizer):
                     # if a trainable activation is used compute gradients for the weights there
                     elif isinstance(layer, Activation) and isinstance(layer.nonlinearity, TrainableNonLinearity):
                         layer.nonlinearity.compute_gradients(layer.input_prev, delta_prev,
-                                                             lambda dx: -1 self.learning_rate * dx)
+                                                             lambda dx: -1 * self.learning_rate * dx)
 
                     # Set the backprop signal for the subsequent (spatially previous) layer
                     delta_prev = gradients[layer.__name__]
@@ -225,8 +225,8 @@ class InSituAdam(Optimizer):
 
                         grad = -1 * self.step_size * mhat / (np.sqrt(vhat) + self.epsilon)
 
-                        layer.nonlinearity.X0_re += np.real(grad).reshape(-1,1)
-                        layer.nonlinearity.X0_im += np.imag(grad).reshape(-1,1)
+                        layer.nonlinearity.bias_real += np.real(grad).reshape(-1,1)
+                        layer.nonlinearity.bias_imag += np.imag(grad).reshape(-1,1)
 
                     # Set the backprop signal for the subsequent (spatially previous) layer
                     delta_prev = deltas[layer.__name__]
